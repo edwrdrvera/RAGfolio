@@ -77,6 +77,44 @@ app.MapPost("/applications", async (JobLedgerDbContext db, CreateApplicationDto 
     
 });
 
+app.MapDelete("/applications", async (JobLedgerDbContext db, int id) =>
+{
+    var application = await db.Applications.FindAsync(id);
+
+    if (application == null)
+    {
+        return Results.NotFound();
+    }
+
+    db.Applications.Remove(application);
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+
+app.MapPut("/applications/{id}", async (JobLedgerDbContext db, int id, UpdateApplicationDto dto) =>
+{
+    var application = await db.Applications
+        .Include(a => a.Company)
+        .FirstOrDefaultAsync(a => a.Id == id);
+
+    if (application == null)
+    {
+        return Results.NotFound();
+    }
+
+    // Find existing company or create a new one
+    var company = await db.Companies
+        .FirstOrDefaultAsync(c => c.Name == dto.CompanyName)
+        ?? new Company { Name = dto.CompanyName };
+
+    application.Company = company;
+    application.Role = dto.Role;
+    application.Status = dto.Status;
+
+    await db.SaveChangesAsync();
+    return Results.NoContent();
+});
+
 app.Run();
 
 
