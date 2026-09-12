@@ -27,6 +27,22 @@ app.MapGet("/", () => "Hello World!");
 app.MapGet("/applications", async (JobLedgerDbContext db) => 
     await db.Applications.Include(a => a.Company).ToListAsync());
 
+// GET /applications/{id} — returns a single application by id with its related Company loaded
+// Returns 404 if no application with that id exists
+app.MapGet("/applications/{id}", async (JobLedgerDbContext db, int id) =>
+{
+    // FindAsync doesn't support .Include(), so we use FirstOrDefaultAsync instead
+    // FirstOrDefaultAsync returns null if no match is found
+    var application = await db.Applications
+    .Include(a => a.Company)
+    .FirstOrDefaultAsync(a => a.Id == id);
+
+    if (application == null)
+    {
+        return Results.NotFound();
+    }
+    return Results.Ok(application);
+});
 
 app.Run();
 
