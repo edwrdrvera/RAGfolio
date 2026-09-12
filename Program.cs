@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using JobLedger.Data;
+using JobLedger.Models;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -15,7 +16,12 @@ builder.Services.AddDbContext<JobLedgerDbContext>(
 // Without this, the JSON serializer would loop forever trying to serialize them.
 // IgnoreCycles tells it to just stop when it hits something it already serialized.
 builder.Services.ConfigureHttpJsonOptions(options =>
-    options.SerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles);
+{
+    options.SerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
+    options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
+});
+
+    
 
 var app = builder.Build();
 
@@ -42,6 +48,33 @@ app.MapGet("/applications/{id}", async (JobLedgerDbContext db, int id) =>
         return Results.NotFound();
     }
     return Results.Ok(application);
+});
+
+
+// POST /applications — creates a new application from a DTO
+// Accepts a CompanyName string instead of a full Company object;
+// looks up the company by name or creates a new one if it doesn't exist
+app.MapPost("/applications", async (JobLedgerDbContext db, CreateApplicationDto dto)=>
+{
+    // Find existing company or create a new one
+    var company = await db.Companies
+        .FirstOrDefaultAsync(c => c.Name == dto.CompanyName)
+        ?? new Company { Name = dto.CompanyName };
+    
+    // Build the Application entity from the DTO fields.
+    // The caller sent a company name string, but the entity needs a full Company object —
+    // this is where that conversion happens.
+    var application = new Application
+    {
+        Company = company,
+        Role = dto.Role,
+        Status = dto.Status
+    };
+
+    db.Applications.Add(application);
+    await db.SaveChangesAsync();
+    return Results.Created($"/applications/{application.Id}", application);
+    
 });
 
 app.Run();
