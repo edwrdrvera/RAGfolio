@@ -77,7 +77,7 @@ app.MapPost("/applications", async (JobLedgerDbContext db, CreateApplicationDto 
     
 });
 
-app.MapDelete("/applications", async (JobLedgerDbContext db, int id) =>
+app.MapDelete("/applications/{id}", async (JobLedgerDbContext db, int id) =>
 {
     var application = await db.Applications.FindAsync(id);
 
