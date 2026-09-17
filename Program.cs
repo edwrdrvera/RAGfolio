@@ -27,6 +27,8 @@ var app = builder.Build();
 
 app.MapGet("/", () => "Hello World!");
 
+app.MapOpenApi();
+
 // Returns all applications from the database.
 // .Include(a => a.Company) also loads the related Company for each application,
 // otherwise the Company field would come back as null.
