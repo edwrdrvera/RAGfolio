@@ -12,3 +12,6 @@ obj/
 .DS_Store
 
 appsettings.Development.json
+
+## AI context files (local only)
+AGENTS.md
