@@ -13,6 +13,8 @@ public class Application
     public required Company Company { get; set; }
 
     public required string Role { get; set; }
+
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public required Status Status { get; set; } = Status.Applied;
 
     // Many-to-many with ResumeVersion. One application can use multiple resume versions,
