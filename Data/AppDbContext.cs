@@ -21,5 +21,5 @@ public class JobLedgerDbContext : DbContext
     public DbSet<Application> Applications { get; set; }
     public DbSet<JobPosting> JobPostings { get; set; }
     public DbSet<ResumeVersion> ResumeVersions { get; set; }
-
+    public DbSet<User> Users => Set<User>();
 }

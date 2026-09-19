@@ -1,7 +1,14 @@
+using System.Text;
 using System.Text.Json.Serialization;
 using JobLedger.Data;
 using JobLedger.Models;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.IdentityModel.JsonWebTokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,9 +28,38 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 
+// Registers the auth and sets default scheme (default request handler is JWT Bearer)
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        // Four checks to determine a token is valid
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            // Who issued it matches
+            ValidateIssuer = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"],
 
+            // Who its for matches
+            ValidateAudience = true,
+            ValidAudience = builder.Configuration["Jwt:Audience"],
+
+            // Is the token still valid
+            ValidateLifetime = true,
+
+            // Validates the token signature using the secret key; symmetric means the same key signs and verifies
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!)
+            )
+        };
+    });
+
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapGet("/", () => "Hello World!");
 
@@ -97,7 +133,7 @@ app.MapDelete("/applications/{id}", async (JobLedgerDbContext db, int id) =>
     db.Applications.Remove(application);
     await db.SaveChangesAsync();
     return Results.NoContent();
-});
+}).RequireAuthorization();
 
 // PUT /applications/{id} — replaces all fields on an existing application
 app.MapPut("/applications/{id}", async (JobLedgerDbContext db, int id, UpdateApplicationDto dto) =>
@@ -147,6 +183,79 @@ app.MapGet("/resumeversions/{id}/usage-count", async (JobLedgerDbContext db, int
     }
 
     return Results.Ok(resumeVersion.Applications.Count);
+});
+
+// POST /auth/register — creates a new user with a hashed password; rejects duplicate usernames
+app.MapPost("/auth/register", async (JobLedgerDbContext db, AuthDto dto) =>
+{
+    // Find existing user or create a new one
+    var existingUser = await db.Users
+        .FirstOrDefaultAsync(user => user.Username == dto.Username);
+
+    if (existingUser != null)
+    {
+        return Results.BadRequest("Username is already taken.");
+    }
+    var hasher = new PasswordHasher<User>();
+
+    var newUser = new User
+    {
+        Username = dto.Username,
+        PasswordHash = hasher.HashPassword(new User(), dto.Password)
+    };
+
+    db.Users.Add(newUser);
+    await db.SaveChangesAsync();
+    return Results.Ok("User registered successfully.");
+});
+
+// POST /auth/login — verifies credentials and returns a signed JWT on success
+app.MapPost("auth/login", async (JobLedgerDbContext db, AuthDto dto) =>
+{
+    // Find the user
+    var existingUser = await db.Users
+    .FirstOrDefaultAsync(a => a.Username == dto.Username);
+
+    // User not found - 401
+    if (existingUser == null)
+    {
+        return Results.Unauthorized();
+    }
+
+    // Verify the password
+    var hasher = new PasswordHasher<User>();
+    var result = hasher.VerifyHashedPassword(existingUser, existingUser.PasswordHash, dto.Password);
+
+    if (result == PasswordVerificationResult.Failed)
+    {
+        return Results.Unauthorized();
+    }
+
+    // Initialize token handler
+    var tokenHandler = new JwtSecurityTokenHandler();
+    // Converts secret key to bytes
+    var key = Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!);
+
+    // Blueprint for token creation
+    var tokenDescriptor = new SecurityTokenDescriptor
+    {
+        Subject = new ClaimsIdentity([new Claim(ClaimTypes.Name, existingUser.Username)]),
+        Expires = DateTime.UtcNow.AddHours(1),
+        Issuer = builder.Configuration["Jwt:Issuer"],
+        Audience = builder.Configuration["Jwt:Audience"],
+        SigningCredentials = new SigningCredentials(
+            new SymmetricSecurityKey(key),
+            SecurityAlgorithms.HmacSha256Signature
+        )
+    };
+
+    // Claims, expiry, and signing key for the token
+    var token = tokenHandler.CreateToken(tokenDescriptor);
+    // Serialize token to xxxxx.yyyyy.zzzzz string
+    var tokenString = tokenHandler.WriteToken(token);
+
+    return Results.Ok(new { token = tokenString });
+
 });
 
 app.Run();
