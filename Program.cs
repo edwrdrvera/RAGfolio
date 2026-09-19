@@ -9,6 +9,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.IdentityModel.JsonWebTokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -54,7 +55,13 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("OwnerOnly", policy =>
+    {
+        policy.RequireRole("Owner");
+    });
+});
 
 var app = builder.Build();
 
@@ -117,7 +124,7 @@ app.MapPost("/applications", async (JobLedgerDbContext db, CreateApplicationDto 
     await db.SaveChangesAsync();
     return Results.Created($"/applications/{application.Id}", application);
 
-});
+}).RequireAuthorization("OwnerOnly");
 
 // DELETE /applications/{id} — removes an application by id
 // Returns 404 if not found, 204 No Content on success (nothing to send back after a delete)
@@ -133,7 +140,7 @@ app.MapDelete("/applications/{id}", async (JobLedgerDbContext db, int id) =>
     db.Applications.Remove(application);
     await db.SaveChangesAsync();
     return Results.NoContent();
-}).RequireAuthorization();
+}).RequireAuthorization("OwnerOnly");
 
 // PUT /applications/{id} — replaces all fields on an existing application
 app.MapPut("/applications/{id}", async (JobLedgerDbContext db, int id, UpdateApplicationDto dto) =>
@@ -158,7 +165,7 @@ app.MapPut("/applications/{id}", async (JobLedgerDbContext db, int id, UpdateApp
 
     await db.SaveChangesAsync();
     return Results.NoContent();
-});
+}).RequireAuthorization("OwnerOnly");
 
 // GET /applications/stale?days=X — returns applications that haven't been updated in more than X days
 app.MapGet("/applications/stale", async (JobLedgerDbContext db, int days) =>
@@ -201,7 +208,8 @@ app.MapPost("/auth/register", async (JobLedgerDbContext db, AuthDto dto) =>
     var newUser = new User
     {
         Username = dto.Username,
-        PasswordHash = hasher.HashPassword(new User(), dto.Password)
+        PasswordHash = hasher.HashPassword(new User(), dto.Password),
+        Role = UserRole.Owner
     };
 
     db.Users.Add(newUser);
@@ -239,7 +247,7 @@ app.MapPost("auth/login", async (JobLedgerDbContext db, AuthDto dto) =>
     // Blueprint for token creation
     var tokenDescriptor = new SecurityTokenDescriptor
     {
-        Subject = new ClaimsIdentity([new Claim(ClaimTypes.Name, existingUser.Username)]),
+        Subject = new ClaimsIdentity([new Claim(ClaimTypes.Name, existingUser.Username), new Claim(ClaimTypes.Role, existingUser.Role.ToString())]),
         Expires = DateTime.UtcNow.AddHours(1),
         Issuer = builder.Configuration["Jwt:Issuer"],
         Audience = builder.Configuration["Jwt:Audience"],
