@@ -1,22 +1,35 @@
-# RAGfolio 
+# RAGfolio
 
-A minimal API that tracks companies, applications, and resume versions — a personal record of job-search activity (applications, statuses, resume versions), not a tool for finding jobs.
+A minimal API that tracks companies, applications, resume versions, and job postings/cover letters — a personal record of job-search activity, not a tool for finding jobs.
 
 ## Stack
 
-- ASP.NET Core Minimal APIs
-- EF Core + PostgreSQL
-- JWT auth with role-based access (Owner/Viewer) — planned
-- xUnit + WebApplicationFactory — planned
+- ASP.NET Core Minimal APIs (no controllers)
+- EF Core + PostgreSQL (`Npgsql.EntityFrameworkCore.PostgreSQL`)
+- JWT auth with role-based access — `Owner` (full read/write) and `Viewer` (read-only)
+- xUnit + `WebApplicationFactory` integration tests
 - Docker + GitHub Actions — planned
 
 ## Current state
 
-Early scaffold, not yet backed by a real database:
+A database-backed API with authentication, authorization, and integration tests:
 
-- In-memory `GET`/`POST /applications` routes (data lives in a list in memory, resets on restart)
-- `Company` and `Application` model classes defined
-- `AppDbContext` (the EF Core class that would connect these models to Postgres) exists but is empty — no database connection yet
+- Full CRUD for `Application` over EF Core + PostgreSQL, using async queries and an injected `DbContext`
+- `ResumeVersion` (many-to-many with `Application`) and `JobPosting`/`CoverLetter` (one-to-many from `Application`), both storing full text
+- Relationship-driven queries: `GET /applications/stale?days=X` and `GET /resumeversions/{id}/usage-count`
+- Registration/login endpoints with password hashing and JWT issuance
+- `Owner`/`Viewer` roles with policy-protected write endpoints
+- `WebApplicationFactory` integration tests hitting real endpoints, running against EF Core InMemory
+
+## Project layout
+
+- `JobLedger.csproj` — the ASP.NET Core web app
+- `JobLedger.Tests/` — xUnit integration tests
+- `JobLedger.slnx` — solution tying both together
+
+```bash
+dotnet test
+```
 
 ## Destination
 
