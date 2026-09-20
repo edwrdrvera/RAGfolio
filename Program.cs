@@ -267,3 +267,7 @@ app.MapPost("/auth/login", async (JobLedgerDbContext db, AuthDto dto) =>
 });
 
 app.Run();
+
+// Required to make Program accessible to WebApplicationFactory in tests.
+// ASP0027 warns this is unnecessary in .NET 10, but removing it causes CS9338.
+public partial class Program { }
