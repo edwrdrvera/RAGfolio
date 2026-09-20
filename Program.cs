@@ -218,7 +218,7 @@ app.MapPost("/auth/register", async (JobLedgerDbContext db, AuthDto dto) =>
 });
 
 // POST /auth/login — verifies credentials and returns a signed JWT on success
-app.MapPost("auth/login", async (JobLedgerDbContext db, AuthDto dto) =>
+app.MapPost("/auth/login", async (JobLedgerDbContext db, AuthDto dto) =>
 {
     // Find the user
     var existingUser = await db.Users
@@ -267,5 +267,3 @@ app.MapPost("auth/login", async (JobLedgerDbContext db, AuthDto dto) =>
 });
 
 app.Run();
-
-
