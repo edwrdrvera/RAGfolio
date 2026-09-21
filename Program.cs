@@ -9,12 +9,40 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.IdentityModel.JsonWebTokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using Microsoft.Extensions.Options;
+using Microsoft.OpenApi;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Adds Swagger so we can test endpoints in the browser at /swagger
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer((document, context, ct) =>
+    {
+        document.Info = new OpenApiInfo
+        {
+            Title = "JobLedger API",
+            Version = "v1",
+            Description = "A job-search tracker. Tracks companies, applications, resume versions, and job postings."
+        };
+
+        // Declare the JWT bearer scheme so Scalar shows an Authorize button
+        document.Components = new OpenApiComponents
+        {
+            SecuritySchemes = new Dictionary<string, IOpenApiSecurityScheme>
+            {
+                ["Bearer"] = new OpenApiSecurityScheme
+                {
+                    Type = SecuritySchemeType.Http,
+                    Scheme = "bearer",
+                    BearerFormat = "JWT",
+                    Description = "Paste a token from POST /auth/login"
+                }
+            }
+        };
+
+        return Task.CompletedTask;
+    });
+});
 
 // Registers the database context with DI so route handlers can receive it as a parameter
 builder.Services.AddDbContext<JobLedgerDbContext>(
@@ -68,51 +96,41 @@ var app = builder.Build();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/", () => "Hello World!");
+app.MapGet("/", () => "Hello World!").ExcludeFromDescription();
 
 app.MapOpenApi();
+app.MapScalarApiReference();
 
-// Returns all applications from the database.
-// .Include(a => a.Company) also loads the related Company for each application,
-// otherwise the Company field would come back as null.
 app.MapGet("/applications", async (JobLedgerDbContext db) =>
 {
     var applications = await db.Applications.Include(a => a.Company).ToListAsync();
-
     return Results.Ok(applications);
-});
+})
+.WithTags("Applications")
+.WithSummary("List all applications")
+.WithDescription("Returns every job application with its associated company.")
+.Produces<List<Application>>(200);
 
-// GET /applications/{id} — returns a single application by id with its related Company loaded
-// Returns 404 if no application with that id exists
 app.MapGet("/applications/{id}", async (JobLedgerDbContext db, int id) =>
 {
-    // FindAsync doesn't support .Include(), so we use FirstOrDefaultAsync instead
-    // FirstOrDefaultAsync returns null if no match is found
     var application = await db.Applications
     .Include(a => a.Company)
     .FirstOrDefaultAsync(a => a.Id == id);
 
-    if (application == null)
-    {
-        return Results.NotFound();
-    }
+    if (application == null) return Results.NotFound();
     return Results.Ok(application);
-});
+})
+.WithTags("Applications")
+.WithSummary("Get an application by id")
+.Produces<Application>(200)
+.Produces(404);
 
-
-// POST /applications — creates a new application from a DTO
-// Accepts a CompanyName string instead of a full Company object;
-// looks up the company by name or creates a new one if it doesn't exist
 app.MapPost("/applications", async (JobLedgerDbContext db, CreateApplicationDto dto) =>
 {
-    // Find existing company or create a new one
     var company = await db.Companies
         .FirstOrDefaultAsync(c => c.Name == dto.CompanyName)
         ?? new Company { Name = dto.CompanyName };
 
-    // Build the Application entity from the DTO fields.
-    // The caller sent a company name string, but the entity needs a full Company object —
-    // this is where that conversion happens.
     var application = new Application
     {
         Company = company,
@@ -123,38 +141,37 @@ app.MapPost("/applications", async (JobLedgerDbContext db, CreateApplicationDto 
     db.Applications.Add(application);
     await db.SaveChangesAsync();
     return Results.Created($"/applications/{application.Id}", application);
+})
+.WithTags("Applications")
+.WithSummary("Create an application")
+.WithDescription("Creates a new application. Looks up the company by name; creates it if it doesn't exist. Requires the Owner role.")
+.Produces<Application>(201)
+.RequireAuthorization("OwnerOnly");
 
-}).RequireAuthorization("OwnerOnly");
-
-// DELETE /applications/{id} — removes an application by id
-// Returns 404 if not found, 204 No Content on success (nothing to send back after a delete)
 app.MapDelete("/applications/{id}", async (JobLedgerDbContext db, int id) =>
 {
     var application = await db.Applications.FindAsync(id);
 
-    if (application == null)
-    {
-        return Results.NotFound();
-    }
+    if (application == null) return Results.NotFound();
 
     db.Applications.Remove(application);
     await db.SaveChangesAsync();
     return Results.NoContent();
-}).RequireAuthorization("OwnerOnly");
+})
+.WithTags("Applications")
+.WithSummary("Delete an application")
+.Produces(204)
+.Produces(404)
+.RequireAuthorization("OwnerOnly");
 
-// PUT /applications/{id} — replaces all fields on an existing application
 app.MapPut("/applications/{id}", async (JobLedgerDbContext db, int id, UpdateApplicationDto dto) =>
 {
     var application = await db.Applications
         .Include(a => a.Company)
         .FirstOrDefaultAsync(a => a.Id == id);
 
-    if (application == null)
-    {
-        return Results.NotFound();
-    }
+    if (application == null) return Results.NotFound();
 
-    // Find existing company or create a new one
     var company = await db.Companies
         .FirstOrDefaultAsync(c => c.Name == dto.CompanyName)
         ?? new Company { Name = dto.CompanyName };
@@ -165,9 +182,14 @@ app.MapPut("/applications/{id}", async (JobLedgerDbContext db, int id, UpdateApp
 
     await db.SaveChangesAsync();
     return Results.NoContent();
-}).RequireAuthorization("OwnerOnly");
+})
+.WithTags("Applications")
+.WithSummary("Update an application")
+.WithDescription("Replaces all fields on an existing application. Requires the Owner role.")
+.Produces(204)
+.Produces(404)
+.RequireAuthorization("OwnerOnly");
 
-// GET /applications/stale?days=X — returns applications that haven't been updated in more than X days
 app.MapGet("/applications/stale", async (JobLedgerDbContext db, int days) =>
 {
     var applications = await db.Applications
@@ -175,34 +197,35 @@ app.MapGet("/applications/stale", async (JobLedgerDbContext db, int days) =>
     .ToListAsync();
 
     return Results.Ok(applications);
-});
+})
+.WithTags("Applications")
+.WithSummary("List stale applications")
+.WithDescription("Returns applications that have not been updated in more than the given number of days.")
+.Produces<List<Application>>(200);
 
-// GET /resumeversions/{id}/usage-count — returns how many applications a resume version has been used on
 app.MapGet("/resumeversions/{id}/usage-count", async (JobLedgerDbContext db, int id) =>
 {
     var resumeVersion = await db.ResumeVersions
         .Include(a => a.Applications)
         .FirstOrDefaultAsync(a => a.Id == id);
 
-    if (resumeVersion == null)
-    {
-        return Results.NotFound();
-    }
+    if (resumeVersion == null) return Results.NotFound();
 
     return Results.Ok(resumeVersion.Applications.Count);
-});
+})
+.WithTags("Resume Versions")
+.WithSummary("Get usage count for a resume version")
+.WithDescription("Returns the number of applications that reference this resume version.")
+.Produces<int>(200)
+.Produces(404);
 
-// POST /auth/register — creates a new user with a hashed password; rejects duplicate usernames
 app.MapPost("/auth/register", async (JobLedgerDbContext db, AuthDto dto) =>
 {
-    // Find existing user or create a new one
     var existingUser = await db.Users
         .FirstOrDefaultAsync(user => user.Username == dto.Username);
 
-    if (existingUser != null)
-    {
-        return Results.BadRequest("Username is already taken.");
-    }
+    if (existingUser != null) return Results.BadRequest("Username is already taken.");
+
     var hasher = new PasswordHasher<User>();
 
     var newUser = new User
@@ -215,36 +238,28 @@ app.MapPost("/auth/register", async (JobLedgerDbContext db, AuthDto dto) =>
     db.Users.Add(newUser);
     await db.SaveChangesAsync();
     return Results.Ok("User registered successfully.");
-});
+})
+.WithTags("Auth")
+.WithSummary("Register a new user")
+.WithDescription("Creates a new user with a hashed password. Rejects duplicate usernames.")
+.Produces<string>(200)
+.Produces(400);
 
-// POST /auth/login — verifies credentials and returns a signed JWT on success
 app.MapPost("/auth/login", async (JobLedgerDbContext db, AuthDto dto) =>
 {
-    // Find the user
     var existingUser = await db.Users
     .FirstOrDefaultAsync(a => a.Username == dto.Username);
 
-    // User not found - 401
-    if (existingUser == null)
-    {
-        return Results.Unauthorized();
-    }
+    if (existingUser == null) return Results.Unauthorized();
 
-    // Verify the password
     var hasher = new PasswordHasher<User>();
     var result = hasher.VerifyHashedPassword(existingUser, existingUser.PasswordHash, dto.Password);
 
-    if (result == PasswordVerificationResult.Failed)
-    {
-        return Results.Unauthorized();
-    }
+    if (result == PasswordVerificationResult.Failed) return Results.Unauthorized();
 
-    // Initialize token handler
     var tokenHandler = new JwtSecurityTokenHandler();
-    // Converts secret key to bytes
     var key = Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!);
 
-    // Blueprint for token creation
     var tokenDescriptor = new SecurityTokenDescriptor
     {
         Subject = new ClaimsIdentity([new Claim(ClaimTypes.Name, existingUser.Username), new Claim(ClaimTypes.Role, existingUser.Role.ToString())]),
@@ -257,13 +272,15 @@ app.MapPost("/auth/login", async (JobLedgerDbContext db, AuthDto dto) =>
         )
     };
 
-    // Claims, expiry, and signing key for the token
     var token = tokenHandler.CreateToken(tokenDescriptor);
-    // Serialize token to xxxxx.yyyyy.zzzzz string
     var tokenString = tokenHandler.WriteToken(token);
 
     return Results.Ok(new { token = tokenString });
-
-});
+})
+.WithTags("Auth")
+.WithSummary("Login")
+.WithDescription("Verifies credentials and returns a signed JWT valid for 1 hour. Use the token in the Authorization header as `Bearer <token>`.")
+.Produces(200)
+.Produces(401);
 
 app.Run();
